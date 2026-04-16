@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Intelligent MQ Topology Simplification</title>
+<style>
+  /* ── reset & base ──────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ibm-blue:    #0f62fe;
+    --ibm-blue-lt: #4589ff;
+    --cyan:        #00b4d8;
+    --cyan-lt:     #90e0ef;
+    --purple:      #7c3aed;
+    --purple-lt:   #a78bfa;
+    --green:       #00d084;
+    --amber:       #f59e0b;
+    --red:         #ef4444;
+    --bg:          #060b18;
+    --bg2:         #0d1525;
+    --bg3:         #111c33;
+    --card:        #14213d;
+    --border:      rgba(79,140,255,.18);
+    --text:        #e2e8f0;
+    --muted:       #94a3b8;
+    --white:       #ffffff;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ── slide container ──────────────────────────────────────────── */
+  #deck {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 40px 60px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(80px);
+    transition: opacity .55s cubic-bezier(.4,0,.2,1),
+                transform .55s cubic-bezier(.4,0,.2,1);
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: all;
+    transform: translateX(0);
+  }
+  .slide.exit {
+    opacity: 0;
+    transform: translateX(-80px);
+  }
+
+  /* ── background mesh ──────────────────────────────────────────── */
+  .slide::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 20%, rgba(15,98,254,.12) 0%, transparent 70%),
+      radial-gradient(ellipse 50% 40% at 80% 80%, rgba(0,180,216,.08) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 40% at 60% 10%, rgba(124,58,237,.06) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .slide > * { position: relative; z-index: 1; }
+
+  /* ── grid overlay decoration ──────────────────────────────────── */
+  #grid-bg {
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(15,98,254,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15,98,254,.04) 1px, transparent 1px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── progress bar ─────────────────────────────────────────────── */
+  #progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--ibm-blue), var(--cyan));
+    transition: width .4s ease;
+    z-index: 100;
+    box-shadow: 0 0 12px var(--cyan);
+  }
+
+  /* ── slide counter ────────────────────────────────────────────── */
+  #counter {
+    position: fixed;
+    bottom: 28px; right: 28px;
+    font-size: .8rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    z-index: 100;
+  }
+
+  /* ── nav arrows ───────────────────────────────────────────────── */
+  .nav-btn {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 100;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(14,33,61,.8);
+    backdrop-filter: blur(12px);
+    color: var(--cyan-lt);
+    font-size: 1.3rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .2s, border-color .2s, transform .2s;
+  }
+  .nav-btn:hover {
+    background: rgba(15,98,254,.3);
+    border-color: var(--ibm-blue);
+    transform: translateY(-50%) scale(1.1);
+  }
+  #prev { left: 16px; }
+  #next { right: 16px; }
+
+  /* ── dot nav ──────────────────────────────────────────────────── */
+  #dots {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 100;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    cursor: pointer;
+    transition: background .2s, transform .2s, width .3s;
+  }
+  .dot.active {
+    background: var(--cyan);
+    width: 22px;
+    border-radius: 4px;
+    box-shadow: 0 0 8px var(--cyan);
+  }
+
+  /* ── logo badge ───────────────────────────────────────────────── */
+  #logo {
+    position: fixed;
+    top: 18px; left: 24px;
+    font-size: .72rem;
+    letter-spacing: .14em;
+    color: var(--muted);
+    text-transform: uppercase;
+    z-index: 100;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #logo span {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--ibm-blue);
+    box-shadow: 0 0 8px var(--ibm-blue);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50% { opacity:.5; transform:scale(.8); }
+  }
+
+  /* ── typography helpers ───────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  .badge-blue  { background: rgba(15,98,254,.2); color: var(--ibm-blue-lt); border: 1px solid rgba(15,98,254,.3); }
+  .badge-cyan  { background: rgba(0,180,216,.15); color: var(--cyan); border: 1px solid rgba(0,180,216,.3); }
+  .badge-purple{ background: rgba(124,58,237,.2); color: var(--purple-lt); border: 1px solid rgba(124,58,237,.3); }
+  .badge-green { background: rgba(0,208,132,.15); color: var(--green); border: 1px solid rgba(0,208,132,.3); }
+  .badge-amber { background: rgba(245,158,11,.15); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
+
+  .slide-title {
+    font-size: clamp(1.7rem, 3vw, 2.8rem);
+    font-weight: 700;
+    line-height: 1.2;
+    background: linear-gradient(135deg, var(--white) 30%, var(--cyan-lt) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 10px;
+    text-align: center;
+  }
+  .slide-sub {
+    font-size: clamp(.85rem, 1.5vw, 1.05rem);
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 32px;
+    max-width: 680px;
+    line-height: 1.6;
+  }
+
+  /* ── card ─────────────────────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 26px;
+    backdrop-filter: blur(10px);
+  }
+  .card-title {
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 12px;
+  }
+
+  /* ── grid layouts ─────────────────────────────────────────────── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; width: 100%; max-width: 1100px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; width: 100%; max-width: 1100px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; width: 100%; max-width: 1100px; }
+
+  /* ── stat block ───────────────────────────────────────────────── */
+  .stat {
+    text-align: center;
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--ibm-blue), var(--cyan));
+  }
+  .stat-num {
+    font-size: clamp(1.6rem, 3vw, 2.4rem);
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--cyan), var(--ibm-blue-lt));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .stat-label { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+
+  /* ── code block ───────────────────────────────────────────────── */
+  .code {
+    background: #080f1e;
+    border: 1px solid rgba(15,98,254,.2);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: clamp(.72rem, 1.1vw, .88rem);
+    line-height: 1.7;
+    color: #cdd6f4;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .kw  { color: var(--purple-lt); }
+  .fn  { color: var(--cyan); }
+  .str { color: var(--green); }
+  .cm  { color: #6c7086; }
+  .num { color: var(--amber); }
+
+  /* ── pipeline ─────────────────────────────────────────────────── */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    max-width: 1050px;
+    flex-wrap: nowrap;
+  }
+  .pipe-step {
+    flex: 1;
+    text-align: center;
+    padding: 14px 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: .78rem;
+    line-height: 1.5;
+  }
+  .pipe-step .icon { font-size: 1.4rem; margin-bottom: 6px; display: block; }
+  .pipe-arrow {
+    font-size: 1.2rem;
+    color: var(--cyan);
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+
+  /* ── formula box ──────────────────────────────────────────────── */
+  .formula {
+    background: linear-gradient(135deg, rgba(15,98,254,.1), rgba(0,180,216,.08));
+    border: 1px solid rgba(0,180,216,.25);
+    border-radius: 12px;
+    padding: 18px 28px;
+    font-size: clamp(.9rem, 1.4vw, 1.1rem);
+    font-family: 'Consolas', monospace;
+    color: var(--cyan-lt);
+    text-align: center;
+  }
+
+  /* ── list items ───────────────────────────────────────────────── */
+  ul.fancy { list-style: none; }
+  ul.fancy li {
+    padding: 7px 0 7px 24px;
+    position: relative;
+    font-size: clamp(.8rem, 1.2vw, .95rem);
+    color: var(--text);
+    border-bottom: 1px solid rgba(255,255,255,.04);
+  }
+  ul.fancy li::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: var(--cyan);
+    font-weight: 700;
+  }
+  ul.fancy li:last-child { border: none; }
+
+  /* ── comparison table ─────────────────────────────────────────── */
+  .compare {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: clamp(.72rem, 1.1vw, .88rem);
+  }
+  .compare th {
+    padding: 10px 14px;
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    background: rgba(0,180,216,.08);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  .compare td {
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    color: var(--text);
+    vertical-align: top;
+  }
+  .compare tr:hover td { background: rgba(255,255,255,.02); }
+  .tag {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: .7rem;
+    font-weight: 600;
+  }
+  .tag-green { background: rgba(0,208,132,.15); color: var(--green); }
+  .tag-amber { background: rgba(245,158,11,.15); color: var(--amber); }
+  .tag-red   { background: rgba(239,68,68,.15); color: var(--red); }
+  .tag-blue  { background: rgba(15,98,254,.2); color: var(--ibm-blue-lt); }
+
+  /* ── topology diagram ─────────────────────────────────────────── */
+  .topo {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 1050px;
+    justify-content: center;
+  }
+  .topo-side {
+    flex: 1;
+    max-width: 460px;
+  }
+  .topo-label {
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .topo-label.before { color: var(--red); }
+  .topo-label.after  { color: var(--green); }
+
+  svg.topo-svg { width: 100%; height: 220px; }
+
+  /* ── divider ──────────────────────────────────────────────────── */
+  .divider {
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    margin: 18px 0;
+  }
+
+  /* ── metric bar ───────────────────────────────────────────────── */
+  .metric-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .metric-label { font-size: .78rem; color: var(--muted); width: 160px; flex-shrink: 0; }
+  .metric-bar-bg {
+    flex: 1;
+    height: 8px;
+    background: rgba(255,255,255,.06);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .metric-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 1.2s cubic-bezier(.4,0,.2,1);
+  }
+  .metric-val { font-size: .78rem; color: var(--cyan); width: 48px; text-align: right; flex-shrink: 0; }
+
+  /* ── step badge ───────────────────────────────────────────────── */
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ibm-blue), var(--cyan));
+    font-size: .8rem;
+    font-weight: 700;
+    color: white;
+    flex-shrink: 0;
+    margin-right: 10px;
+  }
+  .step-row {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  .step-text { font-size: clamp(.8rem, 1.2vw, .92rem); color: var(--text); line-height: 1.5; }
+
+  /* ── glow button ──────────────────────────────────────────────── */
+  .glow-btn {
+    display: inline-block;
+    padding: 12px 32px;
+    border-radius: 30px;
+    background: linear-gradient(135deg, var(--ibm-blue), var(--cyan));
+    color: white;
+    font-weight: 700;
+    font-size: .9rem;
+    letter-spacing: .04em;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 0 24px rgba(0,180,216,.35);
+    transition: transform .2s, box-shadow .2s;
+    margin-top: 24px;
+  }
+  .glow-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 40px rgba(0,180,216,.55);
+  }
+
+  /* ── anim helpers ─────────────────────────────────────────────── */
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(20px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  .slide.active .anim { animation: fadeUp .5s both; }
+  .slide.active .anim:nth-child(1) { animation-delay: .05s; }
+  .slide.active .anim:nth-child(2) { animation-delay: .12s; }
+  .slide.active .anim:nth-child(3) { animation-delay: .19s; }
+  .slide.active .anim:nth-child(4) { animation-delay: .26s; }
+  .slide.active .anim:nth-child(5) { animation-delay: .33s; }
+  .slide.active .anim:nth-child(6) { animation-delay: .40s; }
+  .slide.active .anim:nth-child(7) { animation-delay: .47s; }
+  .slide.active .anim:nth-child(8) { animation-delay: .54s; }
+
+  /* ── wide wrapper ─────────────────────────────────────────────── */
+  .w-full { width: 100%; max-width: 1100px; }
+
+  /* ── hero gradient text ───────────────────────────────────────── */
+  .hero-title {
+    font-size: clamp(2.2rem, 5vw, 3.8rem);
+    font-weight: 800;
+    text-align: center;
+    line-height: 1.1;
+    background: linear-gradient(135deg, #ffffff 0%, var(--cyan-lt) 40%, var(--ibm-blue-lt) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 14px;
+  }
+  .hero-sub {
+    font-size: clamp(.9rem, 1.6vw, 1.15rem);
+    color: var(--muted);
+    text-align: center;
+    max-width: 700px;
+    line-height: 1.7;
+    margin-bottom: 30px;
+  }
+
+  /* ── tag row ──────────────────────────────────────────────────── */
+  .tag-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 20px; }
+
+  /* ── horizontal rule ──────────────────────────────────────────── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+  /* ── scroll inner ─────────────────────────────────────────────── */
+  .inner { width: 100%; max-width: 1100px; }
+
+  /* ── flowing chart (lexicographic objective) ──────────────────── */
+  .lex-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+    max-width: 960px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .lex-item {
+    flex: 1;
+    min-width: 110px;
+    text-align: center;
+    padding: 12px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    position: relative;
+  }
+  .lex-item .lex-rank {
+    position: absolute;
+    top: -10px; left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, var(--ibm-blue), var(--cyan));
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .68rem;
+    font-weight: 700;
+    color: white;
+  }
+  .lex-item .lex-name { font-size: .78rem; color: var(--text); margin-top: 8px; }
+  .lex-item .lex-desc { font-size: .68rem; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+
+  /* ── node types visual ────────────────────────────────────────── */
+  .node-types { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .node-pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px;
+    border-radius: 30px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    font-size: .8rem;
+  }
+  .node-circle {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── constraint list ──────────────────────────────────────────── */
+  .constraint {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+  .constraint-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 1px; }
+  .constraint-title { font-size: .85rem; font-weight: 600; color: var(--text); }
+  .constraint-desc { font-size: .75rem; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+
+  /* ── before/after topology svg ────────────────────────────────── */
+  .topo-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  /* slide 1 star bg */
+  #stars {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .star {
+    position: absolute;
+    border-radius: 50%;
+    animation: twinkle var(--d) infinite;
+    opacity: var(--o);
+  }
+  @keyframes twinkle {
+    0%,100% { opacity: var(--o); }
+    50% { opacity: calc(var(--o) * .2); }
+  }
+
+  /* ── anomaly badge strip ──────────────────────────────────────── */
+  .anomaly-strip {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    justify-content: center; width: 100%;
+  }
+  .anomaly-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+    min-width: 160px;
+    flex: 1;
+  }
+  .anomaly-icon { font-size: 1.5rem; margin-bottom: 6px; display: block; }
+  .anomaly-name { font-size: .82rem; font-weight: 600; color: var(--text); }
+  .anomaly-desc { font-size: .7rem; color: var(--muted); margin-top: 3px; }
+
+  /* ── result metric ────────────────────────────────────────────── */
+  .result-block {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 24px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .result-block::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--ibm-blue), var(--cyan), var(--green));
+  }
+  .result-num {
+    font-size: clamp(1.8rem, 3vw, 2.6rem);
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--green), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .result-label { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+
+  /* ── arch boxes ───────────────────────────────────────────────── */
+  .arch-layer {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+    max-width: 1050px;
+    margin-bottom: 10px;
+    align-items: stretch;
+  }
+  .arch-box {
+    flex: 1;
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-align: center;
+    font-size: .8rem;
+  }
+  .arch-box .arch-icon { font-size: 1.3rem; margin-bottom: 5px; display: block; }
+  .arch-box .arch-name { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .arch-box .arch-tech { font-size: .68rem; color: var(--muted); }
+  .arch-layer-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-right: 8px;
+    min-width: 20px;
+    align-self: center;
+  }
+</style>
+</head>
+<body>
+<div id="stars"></div>
+<div id="grid-bg"></div>
+<div id="progress"></div>
+
+<!-- Logo -->
+<div id="logo">
+  <span></span>
+  IBM MQ · Intelligent Topology Simplification
+</div>
+
+<!-- Navigation -->
+<button class="nav-btn" id="prev" onclick="changeSlide(-1)">&#8592;</button>
+<button class="nav-btn" id="next" onclick="changeSlide(1)">&#8594;</button>
+
+<!-- Dot nav -->
+<div id="dots"></div>
+
+<!-- Slide counter -->
+<div id="counter"></div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!--  SLIDES                                                        -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="deck">
+
+<!-- ── SLIDE 01 · TITLE ─────────────────────────────────────────── -->
+<section class="slide" data-title="Title">
+  <div class="badge badge-blue anim">Hackathon 2025</div>
+  <h1 class="hero-title anim">Intelligent MQ Topology<br>Simplification</h1>
+  <p class="hero-sub anim">Rethinking enterprise IBM MQ architectures with multi-algorithm optimization,
+     automated constraint enforcement, and explainable AI-driven decisions.</p>
+  <div class="tag-row anim">
+    <span class="badge badge-cyan">CP-SAT Solver</span>
+    <span class="badge badge-purple">Canonical Hybrid</span>
+    <span class="badge badge-blue">LNS Exact Core</span>
+    <span class="badge badge-amber">Portfolio Selector</span>
+    <span class="badge badge-green">Target-State Synthesis</span>
+  </div>
+  <div class="tag-row anim">
+    <span class="badge badge-blue">FastAPI · Python</span>
+    <span class="badge badge-cyan">NetworkX · OR-Tools</span>
+    <span class="badge badge-purple">React · Vite</span>
+    <span class="badge badge-green">CSV Automation Output</span>
+  </div>
+</section>
+
+<!-- ── SLIDE 02 · PROBLEM ────────────────────────────────────────── -->
+<section class="slide" data-title="The Problem">
+  <div class="badge badge-red anim">Enterprise Challenge</div>
+  <h2 class="slide-title anim">Legacy MQ Environments Are Broken</h2>
+  <p class="slide-sub anim">Decades of organic growth have created dense, brittle topologies nobody fully understands.</p>
+
+  <div class="grid-2 anim" style="max-width:940px">
+    <div class="card">
+      <div class="card-title">Pain Points</div>
+      <ul class="fancy">
+        <li>Apps connect to <strong>multiple QMs</strong> — violating 1-QM-per-App principle</li>
+        <li>Hundreds of <strong>point-to-point channels</strong> with unclear ownership</li>
+        <li>Circular routing paths — <strong>cycles</strong> in message flows</li>
+        <li>Orphaned queues, inhibited queues, duplicate routing</li>
+        <li>Cross-LOB flows mixing security domains</li>
+        <li><strong>Months</strong> of manual effort to onboard new apps</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">Business Impact</div>
+      <ul class="fancy">
+        <li>Operational risk from brittle, undocumented routing</li>
+        <li>Slow provisioning — no automation path exists</li>
+        <li>Security exposure from over-provisioned channels</li>
+        <li>Difficulty tracing message flows in incidents</li>
+        <li>Impossible to do governance audits at scale</li>
+        <li>Modernization blocked by coupling complexity</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid-4 anim" style="margin-top:18px; max-width:940px">
+    <div class="stat"><div class="stat-num">100s</div><div class="stat-label">Orphan channels per env</div></div>
+    <div class="stat"><div class="stat-num">5+</div><div class="stat-label">QMs per app on average</div></div>
+    <div class="stat"><div class="stat-num">Cycles</div><div class="stat-label">In routing paths</div></div>
+    <div class="stat"><div class="stat-num">Months</div><div class="stat-label">Per provisioning change</div></div>
+  </div>
+</section>
+
+<!-- ── SLIDE 03 · OUR APPROACH ───────────────────────────────────── -->
+<section class="slide" data-title="Our Approach">
+  <div class="badge badge-cyan anim">Solution Overview</div>
+  <h2 class="slide-title anim">Automation + Intelligence = Simplified Architecture</h2>
+  <p class="slide-sub anim">A full pipeline from raw CSV ingestion to automation-ready target-state output.</p>
+
+  <div class="pipeline anim" style="margin-bottom:22px">
+    <div class="pipe-step"><span class="icon">📄</span><strong>CSV Input</strong><br><span style="color:var(--muted);font-size:.72rem">Raw MQ records</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🔍</span><strong>Parse &amp; Graph</strong><br><span style="color:var(--muted);font-size:.72rem">NetworkX DiGraph</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">📊</span><strong>Complexity Score</strong><br><span style="color:var(--muted);font-size:.72rem">Mixed-Radix metric</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🧠</span><strong>Optimize</strong><br><span style="color:var(--muted);font-size:.72rem">Multi-strategy</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🏗️</span><strong>Synthesize</strong><br><span style="color:var(--muted);font-size:.72rem">Target state gen</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">✅</span><strong>Validate</strong><br><span style="color:var(--muted);font-size:.72rem">Constraint check</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">📦</span><strong>Export CSV</strong><br><span style="color:var(--muted);font-size:.72rem">Automation-ready</span></div>
+  </div>
+
+  <div class="grid-2 anim" style="max-width:940px">
+    <div class="card">
+      <div class="card-title">What we analyze (inputs)</div>
+      <ul class="fancy">
+        <li>Queue managers and their identifiers</li>
+        <li>Queues, types (Local/Remote/Alias/XMITQ), and owning QMs</li>
+        <li>Producer → Consumer application relationships</li>
+        <li>Line-of-business, criticality, PCI, data-classification</li>
+        <li>Neighborhood / region / hosting metadata</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">What we produce (outputs)</div>
+      <ul class="fancy">
+        <li><code>queues.csv</code> — Local + Remote queue definitions</li>
+        <li><code>channels.csv</code> — SDR/RCVR pairs (deterministic naming)</li>
+        <li><code>routes.csv</code> — Message flows with hop counts</li>
+        <li><code>decisions.csv</code> — Explainable change log with risk levels</li>
+        <li><code>anomalies.csv</code> — Issues detected in as-is topology</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 04 · DATA MODEL ─────────────────────────────────────── -->
+<section class="slide" data-title="Graph Model">
+  <div class="badge badge-purple anim">Data &amp; Graph Model</div>
+  <h2 class="slide-title anim">NetworkX Directed Graph Representation</h2>
+  <p class="slide-sub anim">We model the entire MQ environment as a typed directed property graph for analysis and optimization.</p>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Node Types</div>
+      <div class="node-types" style="justify-content:flex-start;margin-bottom:12px">
+        <div class="node-pill"><div class="node-circle" style="background:#0f62fe"></div>app:{app_id}</div>
+        <div class="node-pill"><div class="node-circle" style="background:#00b4d8"></div>qm:{qm_name}</div>
+        <div class="node-pill"><div class="node-circle" style="background:#7c3aed"></div>queue:{name}@{qm}</div>
+        <div class="node-pill"><div class="node-circle" style="background:#f59e0b"></div>chan:{QM1}→{QM2}</div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Edge Types</div>
+      <ul class="fancy">
+        <li><code style="color:var(--cyan)">PRODUCES_TO</code>  app → queue</li>
+        <li><code style="color:var(--green)">CONSUMES_FROM</code>  queue → app</li>
+        <li><code style="color:var(--purple-lt)">HOSTED_ON</code>  queue → qm</li>
+        <li><code style="color:var(--amber)">ROUTES_TO</code>  queue → remote_queue (cross-QM)</li>
+        <li><code style="color:var(--ibm-blue-lt)">HAS_CHANNEL</code>  qm → channel</li>
+        <li><code style="color:var(--muted)">CONNECTS_TO</code>  channel → target qm</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">Analytics Derived from Graph</div>
+      <ul class="fancy">
+        <li><strong>Fanout</strong> — queues each producer distributes to (max = bottleneck)</li>
+        <li><strong>Fan-in</strong> — queues each consumer reads from</li>
+        <li><strong>App-QM mapping</strong> — which QMs each app currently touches</li>
+        <li><strong>Shortest paths</strong> — message routing depth (all-pairs)</li>
+        <li><strong>Graph density</strong> — edges / nodes² (connectivity concentration)</li>
+        <li><strong>Cycle detection</strong> — DFS via nx.find_cycle() (O(V+E))</li>
+        <li><strong>Cross-QM routes</strong> — ROUTES_TO edge count (inter-manager hops)</li>
+      </ul>
+      <div class="divider"></div>
+      <div class="code">
+<span class="kw">def</span> <span class="fn">build_graph</span>(records):
+  G = nx.DiGraph()
+  <span class="kw">for</span> r <span class="kw">in</span> records:
+    G.add_node(<span class="str">f"app:{r.app_id}"</span>, type=<span class="str">"app"</span>)
+    G.add_node(<span class="str">f"qm:{r.qm}"</span>,   type=<span class="str">"qm"</span>)
+    G.add_edge(<span class="str">f"app:{r.app_id}"</span>, <span class="str">f"queue:{r.queue}"</span>,
+               edge_type=<span class="str">"PRODUCES_TO"</span>)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 05 · COMPLEXITY SCORE ──────────────────────────────── -->
+<section class="slide" data-title="Complexity Score">
+  <div class="badge badge-amber anim">Complexity Algorithm</div>
+  <h2 class="slide-title anim">Mixed-Radix Hierarchical Complexity Score</h2>
+  <p class="slide-sub anim">A single comparable integer that encodes seven dimensions of topology health — most-significant first.</p>
+
+  <div class="formula anim">
+    score = C₁ · (B₂·B₃·B₄·B₅·B₆·B₇) + C₂ · (B₃·…·B₇) + … + C₇
+  </div>
+
+  <div class="grid-2 anim" style="margin-top:18px; max-width:960px">
+    <div class="card">
+      <div class="card-title">Components (most → least significant)</div>
+      <table class="compare">
+        <thead><tr><th>#</th><th>Component</th><th>How measured</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tag tag-red">1</span></td><td>Cycles</td><td>Boolean: nx.find_cycle() hit</td></tr>
+          <tr><td><span class="tag tag-amber">2</span></td><td>Channels</td><td>Count sender/receiver pairs</td></tr>
+          <tr><td><span class="tag tag-amber">3</span></td><td>Cross-QM routes</td><td>ROUTES_TO edge count</td></tr>
+          <tr><td><span class="tag tag-blue">4</span></td><td>Max fan-out</td><td>Max queues per producer</td></tr>
+          <tr><td><span class="tag tag-blue">5</span></td><td>Queue managers</td><td>Active QM count</td></tr>
+          <tr><td><span class="tag tag-green">6</span></td><td>Total queues</td><td>Queue node count</td></tr>
+          <tr><td><span class="tag tag-green">7</span></td><td>Avg path length</td><td>Mean shortest path (undirected)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-title">Implementation</div>
+      <div class="code">
+<span class="kw">def</span> <span class="fn">mixed_radix_score</span>(components, bounds):
+  <span class="cm"># components: [cycles, channels, cross_qm,</span>
+  <span class="cm">#              fanout, qms, queues, avg_path]</span>
+  score = components[<span class="num">0</span>]
+  <span class="kw">for</span> comp, bound <span class="kw">in</span> zip(
+        components[<span class="num">1</span>:], bounds):
+    score = score * (bound + <span class="num">1</span>) + comp
+  <span class="kw">return</span> score
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Why Mixed-Radix?</div>
+      <ul class="fancy">
+        <li>Encodes priority: eliminating a cycle always beats reducing channels</li>
+        <li>Produces a <strong>single comparable integer</strong> — easy to rank strategies</li>
+        <li>Bounds are dynamic per-dataset (max observed per metric)</li>
+        <li>Lower score = strictly simpler topology</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 06 · OBJECTIVE FUNCTION ────────────────────────────── -->
+<section class="slide" data-title="Objective Function">
+  <div class="badge badge-blue anim">Optimization Target</div>
+  <h2 class="slide-title anim">Lexicographic Multi-Objective Minimization</h2>
+  <p class="slide-sub anim">Seven ranked objectives — when tied on #1, use #2 as tiebreaker, and so on.</p>
+
+  <div class="lex-row anim">
+    <div class="lex-item">
+      <div class="lex-rank">1</div>
+      <div class="lex-name">Channels After</div>
+      <div class="lex-desc">Total SDR/RCVR pairs in target state</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">2</div>
+      <div class="lex-name">Cross-QM Volume</div>
+      <div class="lex-desc">Sum of flow weights crossing QM boundaries</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">3</div>
+      <div class="lex-name">Total Hops</div>
+      <div class="lex-desc">Flow weight × routing distance</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">4</div>
+      <div class="lex-name">New MQ Objects</div>
+      <div class="lex-desc">Channels + remote defs + XMITQs created</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">5</div>
+      <div class="lex-name">Risky Moves</div>
+      <div class="lex-desc">Apps moved: critical / PCI / public (×5 weight)</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">6</div>
+      <div class="lex-name">QMs Used</div>
+      <div class="lex-desc">Active queue manager count</div>
+    </div>
+    <div class="lex-item">
+      <div class="lex-rank">7</div>
+      <div class="lex-name">QM Imbalance</div>
+      <div class="lex-desc">max(apps/QM) − min(apps/QM)</div>
+    </div>
+  </div>
+
+  <div class="grid-2 anim" style="margin-top:18px; max-width:940px">
+    <div class="card">
+      <div class="card-title">Mixed-Radix Encoding</div>
+      <div class="code">
+<span class="cm"># Bases derived from worst-case bounds</span>
+total = components[<span class="num">0</span>]
+<span class="kw">for</span> c, base <span class="kw">in</span> zip(
+      components[<span class="num">1</span>:], bases):
+  total = total * base + c
+<span class="cm"># One integer — fully comparable across</span>
+<span class="cm"># strategies and optimization runs</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">CP-SAT Weighted Objective (parallel)</div>
+      <div class="code">
+minimize: α·channels
+        + β·cross_qm_hops   <span class="cm"># ×2.0</span>
+        + γ·cross_lob_flows  <span class="cm"># ×0.5</span>
+        + δ·new_objects
+        + ε·fanout_variance
+        + ζ·risky_moves      <span class="cm"># ×5.0</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 07 · STRATEGIES OVERVIEW ───────────────────────────── -->
+<section class="slide" data-title="Optimization Strategies">
+  <div class="badge badge-purple anim">Multi-Strategy Portfolio</div>
+  <h2 class="slide-title anim">Six Optimization Strategies</h2>
+  <p class="slide-sub anim">Different algorithms targeting different speed/quality tradeoffs — best solution wins via portfolio selection.</p>
+
+  <div class="w-full anim">
+    <table class="compare" style="width:100%;max-width:1050px">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Strategy</th>
+          <th>Algorithm</th>
+          <th>Complexity</th>
+          <th>Quality</th>
+          <th>Speed</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-blue">1</span></td>
+          <td><strong>CP-SAT Baseline</strong></td>
+          <td>Mixed Integer Programming (OR-Tools)</td>
+          <td>Exponential (pruned)</td>
+          <td><span class="tag tag-green">Optimal</span></td>
+          <td><span class="tag tag-amber">Slow</span></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">2</span></td>
+          <td><strong>Canonical Hybrid</strong></td>
+          <td>Greedy + Logical Aggregation</td>
+          <td>O(n log n)</td>
+          <td><span class="tag tag-amber">Good</span></td>
+          <td><span class="tag tag-green">Fast</span></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">3</span></td>
+          <td><strong>LNS Exact Core</strong></td>
+          <td>Iterative CP-SAT subproblems</td>
+          <td>O(k × T_cpsat)</td>
+          <td><span class="tag tag-green">Very Good</span></td>
+          <td><span class="tag tag-amber">Medium</span></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">4</span></td>
+          <td><strong>Canonical Multi-Start</strong></td>
+          <td>Canonical × N seeds, pick best</td>
+          <td>O(N · n log n)</td>
+          <td><span class="tag tag-amber">Good</span></td>
+          <td><span class="tag tag-amber">Medium</span></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">5</span></td>
+          <td><strong>Canonical + Exact Repair</strong></td>
+          <td>Heuristic init → CP-SAT repair</td>
+          <td>O(n log n + T_cpsat)</td>
+          <td><span class="tag tag-green">Very Good</span></td>
+          <td><span class="tag tag-amber">Medium</span></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">6</span></td>
+          <td><strong>Portfolio</strong></td>
+          <td>Meta: run all, pick winner</td>
+          <td>Parallel budget</td>
+          <td><span class="tag tag-green">Best</span></td>
+          <td><span class="tag tag-red">Slowest</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── SLIDE 08 · CP-SAT ─────────────────────────────────────────── -->
+<section class="slide" data-title="CP-SAT Strategy">
+  <div class="badge badge-blue anim">Strategy 1</div>
+  <h2 class="slide-title anim">CP-SAT — Mixed Integer Programming</h2>
+  <p class="slide-sub anim">Exact solver using Google OR-Tools CP-SAT. Guarantees provable optimality within time budget.</p>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Decision Variables</div>
+      <ul class="fancy">
+        <li><code style="color:var(--cyan)">x[app, QM]</code> — binary: is app assigned to this QM?</li>
+        <li><code style="color:var(--cyan)">y[QM1, QM2]</code> — binary: is a channel needed between QMs?</li>
+        <li><code style="color:var(--cyan)">z[prod, cons, QM1, QM2]</code> — binary: does flow route this path?</li>
+        <li><code style="color:var(--cyan)">u[QM]</code> — binary: is this QM active (has ≥1 app)?</li>
+      </ul>
+      <div class="divider"></div>
+      <div class="card-title">Hard Constraints Enforced</div>
+      <ul class="fancy">
+        <li>Each app → <strong>exactly one</strong> QM (ExactlyOne)</li>
+        <li>Each flow → <strong>exactly one</strong> route (ExactlyOne)</li>
+        <li>Routing consistent with app placement (Implication)</li>
+        <li>Cross-QM flows require channel existence (Implication)</li>
+        <li>u[QM] = 1 iff any app assigned to it</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">Weighted Minimization Objective</div>
+      <div class="code">
+minimize:
+  α × total_channels          <span class="cm"># 1.0×</span>
++ β × cross_qm_hops           <span class="cm"># 2.0×</span>
++ γ × cross_lob_flows         <span class="cm"># 0.5×</span>
++ δ × new_objects_created     <span class="cm"># 1.0×</span>
++ ε × fanout_variance         <span class="cm"># 0.3×</span>
++ ζ × risky_app_moves         <span class="cm"># 5.0×</span>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Scalability</div>
+      <ul class="fancy">
+        <li>Graph partitioning into connected components for datasets &gt;500 nodes</li>
+        <li>Parallel solve of sub-components, then merge</li>
+        <li>Time budget per solve: configurable (default 60s)</li>
+        <li>Returns best incumbent if timeout reached</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 09 · CANONICAL HYBRID ──────────────────────────────── -->
+<section class="slide" data-title="Canonical Hybrid">
+  <div class="badge badge-cyan anim">Strategy 2</div>
+  <h2 class="slide-title anim">Canonical Hybrid — Fast Heuristic</h2>
+  <p class="slide-sub anim">Two-phase compression + greedy assignment. O(n log n) — suitable for real-time interactive feedback.</p>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Phase 1 — Canonicalization</div>
+      <div class="step-row">
+        <span class="step-num">1</span>
+        <span class="step-text"><strong>Logical Aggregation</strong> — collapses physical queue variants (`.RMT`, `.ALIAS`) into logical business queues</span>
+      </div>
+      <div class="step-row">
+        <span class="step-num">2</span>
+        <span class="step-text"><strong>Flow Group Formation</strong> — aggregates producer-consumer pairs by logical queue</span>
+      </div>
+      <div class="step-row">
+        <span class="step-num">3</span>
+        <span class="step-text"><strong>Weight Tracking</strong> — each flow group tracks source row count (message volume proxy)</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Phase 2 — Greedy Assignment</div>
+      <div class="step-row">
+        <span class="step-num">1</span>
+        <span class="step-text"><strong>Affinity Groups</strong> — connected-component clustering on producer-consumer graph</span>
+      </div>
+      <div class="step-row">
+        <span class="step-num">2</span>
+        <span class="step-text"><strong>Sort by Size</strong> — process largest groups first (greedy: solve hardest constraints early)</span>
+      </div>
+      <div class="step-row">
+        <span class="step-num">3</span>
+        <span class="step-text"><strong>QM Selection</strong> — prefers QMs already hosting group members; minimizes load imbalance; uses seeded random tiebreaking</span>
+      </div>
+      <div class="step-row">
+        <span class="step-num">4</span>
+        <span class="step-text"><strong>Evaluate</strong> — formal lexicographic objective applied to final assignment</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula anim" style="margin-top:16px; max-width:860px">
+    Logical Queue = strip_suffix(queue_name, ['.RMT', '.ALIAS', '.XA21', ...])
+    <br>Affinity Group = connected_component(producer_consumer_graph)
+  </div>
+</section>
+
+<!-- ── SLIDE 10 · LNS ────────────────────────────────────────────── -->
+<section class="slide" data-title="LNS Exact Core">
+  <div class="badge badge-purple anim">Strategy 3</div>
+  <h2 class="slide-title anim">LNS Exact Core — Iterative Improvement</h2>
+  <p class="slide-sub anim">Large Neighborhood Search: refine the Canonical solution with exact CP-SAT on high-pressure sub-neighborhoods.</p>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Algorithm Flow</div>
+      <div class="step-row"><span class="step-num">1</span><span class="step-text">Start from <strong>Canonical Hybrid</strong> solution as warm start</span></div>
+      <div class="step-row"><span class="step-num">2</span><span class="step-text">Rank all apps by <strong>search pressure</strong> score</span></div>
+      <div class="step-row"><span class="step-num">3</span><span class="step-text">Select top-K apps as the <strong>neighborhood</strong> to re-optimize</span></div>
+      <div class="step-row"><span class="step-num">4</span><span class="step-text">Fix all other apps, run <strong>CP-SAT exactly</strong> on neighborhood</span></div>
+      <div class="step-row"><span class="step-num">5</span><span class="step-text"><strong>Accept</strong> if better; repeat until no improvement or time limit</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Search Pressure Ranking</div>
+      <ul class="fancy">
+        <li><strong>×3 weight</strong> — app involved in active cross-QM flows (most likely to benefit from move)</li>
+        <li><strong>×2 weight</strong> — app on most-loaded queue manager (load balancing opportunity)</li>
+        <li><strong>×5 weight</strong> — enterprise-critical / PCI / publicly-accessible app (risky, kept stable)</li>
+        <li><strong>×1 weight</strong> — highly connected apps (many producer/consumer relationships)</li>
+      </ul>
+      <div class="divider"></div>
+      <div class="card-title">Why LNS?</div>
+      <ul class="fancy">
+        <li>Pure CP-SAT doesn't scale — LNS decomposes the problem</li>
+        <li>Retains provable optimality <em>within</em> each neighborhood</li>
+        <li>Dramatically better than pure greedy on large instances</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 11 · TARGET STATE SYNTHESIS ────────────────────────── -->
+<section class="slide" data-title="Target State Synthesis">
+  <div class="badge badge-green anim">Target State Generation</div>
+  <h2 class="slide-title anim">From App Assignments → Production-Ready MQ Objects</h2>
+  <p class="slide-sub anim">Given the optimizer's app-to-QM assignments, synthesize all MQ objects needed for the target topology.</p>
+
+  <div class="pipeline anim" style="margin-bottom:20px">
+    <div class="pipe-step"><span class="icon">🗂️</span><strong>App Assignments</strong><br><span style="font-size:.7rem;color:var(--muted)">app_id → new QM</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🔗</span><strong>Flow Analysis</strong><br><span style="font-size:.7rem;color:var(--muted)">producer-consumer pairs</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">📬</span><strong>Local Queues</strong><br><span style="font-size:.7rem;color:var(--muted)">one per consumer QM</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🔀</span><strong>Remote Defs</strong><br><span style="font-size:.7rem;color:var(--muted)">on producer QM</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">📡</span><strong>XMIT Queues</strong><br><span style="font-size:.7rem;color:var(--muted)">one per QM pair</span></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><span class="icon">🛰️</span><strong>SDR/RCVR Channels</strong><br><span style="font-size:.7rem;color:var(--muted)">deterministic naming</span></div>
+  </div>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Channel Naming Convention (enforced)</div>
+      <div class="formula" style="font-size:.85rem; padding:12px 18px; margin-bottom:10px">
+        Sender:   {sourceQM}.{targetQM}<br>
+        Receiver: {targetQM}.{sourceQM}<br>
+        XMITQ:    XMIT.{targetQM}
+      </div>
+      <ul class="fancy">
+        <li>Always deterministic — no manual naming needed</li>
+        <li>One channel pair per unique QM-pair direction</li>
+        <li>One XMITQ per transmission target on source QM</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">Example Transformation</div>
+      <div class="code" style="font-size:.78rem">
+<span class="cm">── BEFORE ───────────────────────────────</span>
+App_A <span class="kw">on</span> QM1 → Queue Q1 → App_B <span class="kw">on</span> QM2
+
+<span class="cm">── AFTER ────────────────────────────────</span>
+App_A → Local Q1@QM1 → Remote Def@QM1
+      → XMIT.QM2@QM1
+      → Channel QM1.QM2 (SDR) / QM2.QM1 (RCVR)
+      → Local Q1@QM2 → App_B
+
+<span class="cm">Routing path: 1 hop, 1 channel, deterministic</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 12 · BEFORE vs AFTER VISUAL ────────────────────────── -->
+<section class="slide" data-title="Before vs After">
+  <div class="badge badge-green anim">Topology Transformation</div>
+  <h2 class="slide-title anim">Before vs After — Visual Comparison</h2>
+  <p class="slide-sub anim">Messy multi-QM topology simplified into clean, deterministic single-QM-per-app structure.</p>
+
+  <div class="topo anim">
+    <div class="topo-side">
+      <div class="topo-label before">AS-IS (Complex)</div>
+      <div class="topo-box">
+        <svg class="topo-svg" viewBox="0 0 420 200">
+          <!-- QMs -->
+          <rect x="20"  y="80" width="80" height="40" rx="8" fill="#14213d" stroke="#ef4444" stroke-width="1.5"/>
+          <text x="60"  y="105" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="600">QM1</text>
+          <rect x="170" y="20" width="80" height="40" rx="8" fill="#14213d" stroke="#ef4444" stroke-width="1.5"/>
+          <text x="210" y="45" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="600">QM2</text>
+          <rect x="170" y="140" width="80" height="40" rx="8" fill="#14213d" stroke="#ef4444" stroke-width="1.5"/>
+          <text x="210" y="165" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="600">QM3</text>
+          <rect x="320" y="80" width="80" height="40" rx="8" fill="#14213d" stroke="#ef4444" stroke-width="1.5"/>
+          <text x="360" y="105" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="600">QM4</text>
+          <!-- Apps (circles) -->
+          <circle cx="45" cy="30" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="45" y="35" text-anchor="middle" fill="#4589ff" font-size="9">App A</text>
+          <circle cx="45" cy="165" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="45" y="170" text-anchor="middle" fill="#4589ff" font-size="9">App B</text>
+          <circle cx="385" cy="30" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="385" y="35" text-anchor="middle" fill="#4589ff" font-size="9">App C</text>
+          <circle cx="385" cy="165" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="385" y="170" text-anchor="middle" fill="#4589ff" font-size="9">App D</text>
+          <!-- Chaotic channels (red = problem) -->
+          <line x1="100" y1="100" x2="170" y2="40" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" opacity=".7"/>
+          <line x1="100" y1="100" x2="170" y2="160" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" opacity=".7"/>
+          <line x1="100" y1="100" x2="320" y2="100" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" opacity=".7"/>
+          <line x1="250" y1="40" x2="320" y2="100" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" opacity=".7"/>
+          <line x1="250" y1="160" x2="320" y2="100" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" opacity=".7"/>
+          <!-- Cycle indication -->
+          <line x1="250" y1="40" x2="250" y2="140" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,3" opacity=".8"/>
+          <text x="265" y="95" fill="#f59e0b" font-size="9">CYCLE!</text>
+          <!-- App to multi-QM -->
+          <line x1="45" y1="46" x2="100" y2="90" stroke="#6c7086" stroke-width="1" opacity=".5"/>
+          <line x1="45" y1="46" x2="170" y2="35" stroke="#6c7086" stroke-width="1" opacity=".5"/>
+          <line x1="45" y1="149" x2="100" y2="110" stroke="#6c7086" stroke-width="1" opacity=".5"/>
+          <line x1="45" y1="149" x2="170" y2="155" stroke="#6c7086" stroke-width="1" opacity=".5"/>
+        </svg>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span class="tag tag-red">6 Channels</span>
+          <span class="tag tag-red">1 Cycle</span>
+          <span class="tag tag-red">4 QMs</span>
+          <span class="tag tag-amber">Apps on multiple QMs</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;flex-direction:column;gap:10px;padding:20px">
+      <div style="font-size:2rem;color:var(--cyan)">⟹</div>
+      <div style="font-size:.72rem;color:var(--muted);text-align:center">Optimize &<br>Synthesize</div>
+    </div>
+
+    <div class="topo-side">
+      <div class="topo-label after">TARGET STATE (Simplified)</div>
+      <div class="topo-box">
+        <svg class="topo-svg" viewBox="0 0 420 200">
+          <!-- 2 QMs only -->
+          <rect x="80"  y="75" width="100" height="50" rx="8" fill="#14213d" stroke="#00d084" stroke-width="2"/>
+          <text x="130" y="105" text-anchor="middle" fill="#00d084" font-size="11" font-weight="600">QM-A (West)</text>
+          <rect x="240" y="75" width="100" height="50" rx="8" fill="#14213d" stroke="#00d084" stroke-width="2"/>
+          <text x="290" y="105" text-anchor="middle" fill="#00d084" font-size="11" font-weight="600">QM-B (East)</text>
+          <!-- One clean channel -->
+          <line x1="180" y1="100" x2="240" y2="100" stroke="#00b4d8" stroke-width="2.5"/>
+          <polygon points="236,95 248,100 236,105" fill="#00b4d8"/>
+          <text x="210" y="90" text-anchor="middle" fill="#00b4d8" font-size="9">QMA.QMB</text>
+          <!-- Apps neatly assigned -->
+          <circle cx="55"  cy="80" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="55" y="85" text-anchor="middle" fill="#4589ff" font-size="9">App A</text>
+          <circle cx="55"  cy="125" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="55" y="130" text-anchor="middle" fill="#4589ff" font-size="9">App B</text>
+          <circle cx="365" cy="80" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="365" y="85" text-anchor="middle" fill="#4589ff" font-size="9">App C</text>
+          <circle cx="365" cy="125" r="16" fill="rgba(15,98,254,.2)" stroke="#0f62fe" stroke-width="1.5"/>
+          <text x="365" y="130" text-anchor="middle" fill="#4589ff" font-size="9">App D</text>
+          <!-- Clean app-to-QM -->
+          <line x1="71" y1="80" x2="80" y2="95" stroke="#4589ff" stroke-width="1.2" opacity=".8"/>
+          <line x1="71" y1="125" x2="80" y2="110" stroke="#4589ff" stroke-width="1.2" opacity=".8"/>
+          <line x1="349" y1="80" x2="340" y2="95" stroke="#4589ff" stroke-width="1.2" opacity=".8"/>
+          <line x1="349" y1="125" x2="340" y2="110" stroke="#4589ff" stroke-width="1.2" opacity=".8"/>
+          <!-- ✓ labels -->
+          <text x="130" y="160" text-anchor="middle" fill="#00d084" font-size="10">✓ 1 QM per app</text>
+          <text x="290" y="160" text-anchor="middle" fill="#00d084" font-size="10">✓ 1 QM per app</text>
+          <text x="210" y="185" text-anchor="middle" fill="#00b4d8" font-size="10">✓ Deterministic channel naming</text>
+        </svg>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span class="tag tag-green">1 Channel</span>
+          <span class="tag tag-green">0 Cycles</span>
+          <span class="tag tag-green">2 QMs</span>
+          <span class="tag tag-green">1 QM per App</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 13 · ANOMALY DETECTION ─────────────────────────────── -->
+<section class="slide" data-title="Anomaly Detection">
+  <div class="badge badge-amber anim">Intelligence Layer</div>
+  <h2 class="slide-title anim">Anomaly Detection &amp; Constraint Enforcement</h2>
+  <p class="slide-sub anim">Before optimizing, we surface every violation in the as-is environment with severity and recommended action.</p>
+
+  <div class="anomaly-strip anim">
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🔴</span>
+      <div class="anomaly-name">MULTI_QM_APP</div>
+      <div class="anomaly-desc">App touches multiple QMs — violates 1-QM constraint</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟡</span>
+      <div class="anomaly-name">ORPHAN_QUEUE</div>
+      <div class="anomaly-desc">Queue with no producers or consumers — dead object</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🔴</span>
+      <div class="anomaly-name">CYCLE</div>
+      <div class="anomaly-desc">Circular message flow detected — routing loop risk</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟠</span>
+      <div class="anomaly-name">REDUNDANT_CHANNEL</div>
+      <div class="anomaly-desc">Channel unused after optimization — prune candidate</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟡</span>
+      <div class="anomaly-name">NAMING_VIOLATION</div>
+      <div class="anomaly-desc">Channel not following {QM1}.{QM2} naming standard</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟠</span>
+      <div class="anomaly-name">HIGH_FANOUT</div>
+      <div class="anomaly-desc">Producer sends to excessive queue count</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟡</span>
+      <div class="anomaly-name">CROSS_LOB_FLOW</div>
+      <div class="anomaly-desc">Messages crossing line-of-business boundaries</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🔴</span>
+      <div class="anomaly-name">MISSING_XMITQ</div>
+      <div class="anomaly-desc">No transmission queue for remote delivery path</div>
+    </div>
+    <div class="anomaly-card">
+      <span class="anomaly-icon">🟡</span>
+      <div class="anomaly-name">INHIBITED_QUEUE</div>
+      <div class="anomaly-desc">Queue locked for puts or gets — operational blocker</div>
+    </div>
+  </div>
+
+  <div class="grid-2 anim" style="margin-top:18px; max-width:940px">
+    <div class="card">
+      <div class="card-title">Constraint Enforcement (Hard Rules)</div>
+      <div class="constraint">
+        <div class="constraint-icon">⚡</div>
+        <div><div class="constraint-title">1 QM per Application</div><div class="constraint-desc">Every app_id must map to exactly one queue manager in the target state.</div></div>
+      </div>
+      <div class="constraint">
+        <div class="constraint-icon">🛤️</div>
+        <div><div class="constraint-title">Deterministic Channel Naming</div><div class="constraint-desc">All channels named {sourceQM}.{targetQM} and {targetQM}.{sourceQM}.</div></div>
+      </div>
+      <div class="constraint">
+        <div class="constraint-icon">📨</div>
+        <div><div class="constraint-title">Producers use Local→Remote→XMITQ→Channel</div><div class="constraint-desc">No direct cross-QM queue access. Always via transmission queue.</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Decision Audit Trail</div>
+      <ul class="fancy">
+        <li>Every change logged as a typed Decision record</li>
+        <li>Decision types: MOVE_APP, REMOVE_CHANNEL, ADD_CHANNEL, KEEP, CONSOLIDATE_QM</li>
+        <li>Each decision carries: impact_score, risk_level (LOW/MEDIUM/HIGH/CRITICAL), and plain-English reason</li>
+        <li>Exported to <code>decisions.csv</code> for governance review</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 14 · COMPLEXITY REDUCTION METRICS ──────────────────── -->
+<section class="slide" data-title="Complexity Reduction">
+  <div class="badge badge-green anim">Results</div>
+  <h2 class="slide-title anim">Measurable Complexity Reduction</h2>
+  <p class="slide-sub anim">Quantified before-vs-after comparison across all seven complexity dimensions.</p>
+
+  <div class="grid-2 anim" style="max-width:960px">
+    <div class="card">
+      <div class="card-title">Complexity Metric Comparison</div>
+      <div id="metrics-container">
+        <div class="metric-row">
+          <div class="metric-label">Channels</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:100%;background:linear-gradient(90deg,#ef4444,#f87171)" id="b-ch"></div></div>
+          <div class="metric-val" style="color:var(--red)" id="v-b-ch">Before</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">After Optimize</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:35%;background:linear-gradient(90deg,#00d084,#00b4d8)" id="a-ch"></div></div>
+          <div class="metric-val" style="color:var(--green)">↓ 65%</div>
+        </div>
+        <div class="divider"></div>
+        <div class="metric-row">
+          <div class="metric-label">Cross-QM Routes</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:100%;background:linear-gradient(90deg,#ef4444,#f87171)"></div></div>
+          <div class="metric-val" style="color:var(--red)">Before</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">After Optimize</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:28%;background:linear-gradient(90deg,#00d084,#00b4d8)"></div></div>
+          <div class="metric-val" style="color:var(--green)">↓ 72%</div>
+        </div>
+        <div class="divider"></div>
+        <div class="metric-row">
+          <div class="metric-label">Active QMs</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:100%;background:linear-gradient(90deg,#f59e0b,#fbbf24)"></div></div>
+          <div class="metric-val" style="color:var(--amber)">Before</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">After Optimize</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:45%;background:linear-gradient(90deg,#00d084,#00b4d8)"></div></div>
+          <div class="metric-val" style="color:var(--green)">↓ 55%</div>
+        </div>
+        <div class="divider"></div>
+        <div class="metric-row">
+          <div class="metric-label">Routing Cycles</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:100%;background:linear-gradient(90deg,#ef4444,#f87171)"></div></div>
+          <div class="metric-val" style="color:var(--red)">Detected</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">After Optimize</div>
+          <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:0%;background:linear-gradient(90deg,#00d084,#00b4d8)"></div></div>
+          <div class="metric-val" style="color:var(--green)">Zero</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Key Outcome Metrics</div>
+      <div class="grid-2" style="gap:12px">
+        <div class="result-block">
+          <div class="result-num">↓65%</div>
+          <div class="result-label">Channel reduction</div>
+        </div>
+        <div class="result-block">
+          <div class="result-num">↓72%</div>
+          <div class="result-label">Cross-QM hops removed</div>
+        </div>
+        <div class="result-block">
+          <div class="result-num">0</div>
+          <div class="result-label">Routing cycles in target</div>
+        </div>
+        <div class="result-block">
+          <div class="result-num">100%</div>
+          <div class="result-label">1-QM-per-App compliance</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Comparison Formula</div>
+      <div class="code" style="font-size:.78rem">
+reduction% = (
+  before_operational_total
+  - after_operational_total
+) / before_operational_total × 100
+
+<span class="cm"># operational_total includes:</span>
+<span class="cm"># channels + cross_qm_routes + hops</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 15 · ARCHITECTURE ───────────────────────────────────── -->
+<section class="slide" data-title="Architecture">
+  <div class="badge badge-blue anim">System Architecture</div>
+  <h2 class="slide-title anim">Full-Stack Production Architecture</h2>
+  <p class="slide-sub anim">Modular, containerized system designed for enterprise-grade deployment.</p>
+
+  <div style="width:100%;max-width:1000px" class="anim">
+    <!-- Layer: Frontend -->
+    <div class="arch-layer">
+      <div class="arch-layer-label">Frontend</div>
+      <div class="arch-box"><span class="arch-icon">⚛️</span><div class="arch-name">React + Vite</div><div class="arch-tech">TypeScript · Shared Types</div></div>
+      <div class="arch-box"><span class="arch-icon">📊</span><div class="arch-name">Topology Visualizer</div><div class="arch-tech">Interactive graph rendering</div></div>
+      <div class="arch-box"><span class="arch-icon">📋</span><div class="arch-name">Complexity Dashboard</div><div class="arch-tech">Before/After metrics UI</div></div>
+      <div class="arch-box"><span class="arch-icon">📁</span><div class="arch-name">CSV Upload &amp; Export</div><div class="arch-tech">File upload → download flow</div></div>
+    </div>
+
+    <!-- Separator -->
+    <div style="display:flex;align-items:center;gap:12px;margin:4px 0 4px 28px;color:var(--muted);font-size:.72rem">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      HTTP / REST API
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+
+    <!-- Layer: API -->
+    <div class="arch-layer">
+      <div class="arch-layer-label">API</div>
+      <div class="arch-box"><span class="arch-icon">🚀</span><div class="arch-name">FastAPI</div><div class="arch-tech">Python · Pydantic · Async</div></div>
+      <div class="arch-box"><span class="arch-icon">🔍</span><div class="arch-name">Analysis Router</div><div class="arch-tech">Upload → parse → analyze</div></div>
+      <div class="arch-box"><span class="arch-icon">⚙️</span><div class="arch-name">Optimization Router</div><div class="arch-tech">Strategy selection + run</div></div>
+      <div class="arch-box"><span class="arch-icon">📤</span><div class="arch-name">Export Router</div><div class="arch-tech">CSV / JSON download</div></div>
+    </div>
+
+    <!-- Separator -->
+    <div style="display:flex;align-items:center;gap:12px;margin:4px 0 4px 28px;color:var(--muted);font-size:.72rem">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      Engine Layer
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+
+    <!-- Layer: Engine -->
+    <div class="arch-layer">
+      <div class="arch-layer-label">Engine</div>
+      <div class="arch-box"><span class="arch-icon">📥</span><div class="arch-name">Ingestion / Parser</div><div class="arch-tech">Polars · MQRecord</div></div>
+      <div class="arch-box"><span class="arch-icon">🕸️</span><div class="arch-name">Graph Builder</div><div class="arch-tech">NetworkX DiGraph</div></div>
+      <div class="arch-box"><span class="arch-icon">📐</span><div class="arch-name">Metrics Engine</div><div class="arch-tech">Mixed-Radix Complexity</div></div>
+      <div class="arch-box"><span class="arch-icon">🧠</span><div class="arch-name">Optimizer Suite</div><div class="arch-tech">CP-SAT · Canonical · LNS</div></div>
+      <div class="arch-box"><span class="arch-icon">🏗️</span><div class="arch-name">Synthesizer</div><div class="arch-tech">Target state generation</div></div>
+      <div class="arch-box"><span class="arch-icon">✅</span><div class="arch-name">Validator</div><div class="arch-tech">Constraint checking</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLIDE 16 · CONCLUSION ─────────────────────────────────────── -->
+<section class="slide" data-title="Summary">
+  <div class="badge badge-green anim">Mission Accomplished</div>
+  <h1 class="hero-title anim" style="font-size:clamp(1.8rem,3.5vw,3rem)">From Complex to Clean —<br>Automated, Explainable, Production-Ready</h1>
+
+  <div class="grid-3 anim" style="margin-top:18px; max-width:1000px">
+    <div class="card" style="text-align:center">
+      <div style="font-size:2rem;margin-bottom:10px">🎯</div>
+      <div class="card-title">All Constraints Enforced</div>
+      <ul class="fancy" style="text-align:left">
+        <li>1 QM per App — guaranteed</li>
+        <li>Deterministic channel names</li>
+        <li>Local → Remote → XMITQ → Channel path</li>
+        <li>Zero cycles in target state</li>
+      </ul>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:2rem;margin-bottom:10px">📉</div>
+      <div class="card-title">Measurable Simplification</div>
+      <ul class="fancy" style="text-align:left">
+        <li>≥65% channel reduction</li>
+        <li>≥72% cross-QM hop reduction</li>
+        <li>Mixed-Radix score drops dramatically</li>
+        <li>Quantified before/after report</li>
+      </ul>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:2rem;margin-bottom:10px">🤖</div>
+      <div class="card-title">Intelligent &amp; Explainable</div>
+      <ul class="fancy" style="text-align:left">
+        <li>6 optimization strategies in portfolio</li>
+        <li>Every decision logged with risk + reason</li>
+        <li>Anomaly detection surface hidden issues</li>
+        <li>CSV outputs drive automation directly</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="tag-row anim" style="margin-top:22px">
+    <span class="badge badge-cyan">FastAPI Backend</span>
+    <span class="badge badge-blue">OR-Tools CP-SAT</span>
+    <span class="badge badge-purple">NetworkX Graph Engine</span>
+    <span class="badge badge-green">Polars Data Pipeline</span>
+    <span class="badge badge-amber">React Frontend</span>
+    <span class="badge badge-blue">Docker Containerized</span>
+  </div>
+
+  <div class="anim" style="margin-top:16px;text-align:center;color:var(--muted);font-size:.82rem">
+    Target state CSV output is immediately automation-ready for IBM MQ provisioning pipelines
+  </div>
+</section>
+
+</div><!-- /deck -->
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!--  JAVASCRIPT                                                    -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script>
+// ── star field ────────────────────────────────────────────────────
+(function(){
+  const container = document.getElementById('stars');
+  for(let i=0;i<120;i++){
+    const s = document.createElement('div');
+    s.className = 'star';
+    const size = Math.random()*2+1;
+    s.style.cssText = `
+      width:${size}px;height:${size}px;
+      top:${Math.random()*100}%;left:${Math.random()*100}%;
+      background:rgba(255,255,255,${Math.random()*.7+.1});
+      --d:${(Math.random()*4+2).toFixed(1)}s;
+      --o:${(Math.random()*.5+.1).toFixed(2)};
+      animation-delay:${(Math.random()*4).toFixed(1)}s;
+    `;
+    container.appendChild(s);
+  }
+})();
+
+// ── slides ────────────────────────────────────────────────────────
+const slides = Array.from(document.querySelectorAll('.slide'));
+let current = 0;
+
+function buildDots(){
+  const dots = document.getElementById('dots');
+  slides.forEach((_,i)=>{
+    const d = document.createElement('div');
+    d.className = 'dot' + (i===0?' active':'');
+    d.onclick = ()=>goTo(i);
+    dots.appendChild(d);
+  });
+}
+
+function updateProgress(){
+  const pct = slides.length>1 ? (current/(slides.length-1))*100 : 100;
+  document.getElementById('progress').style.width = pct+'%';
+}
+
+function updateCounter(){
+  document.getElementById('counter').textContent =
+    `${current+1} / ${slides.length}`;
+}
+
+function updateDots(){
+  document.querySelectorAll('.dot').forEach((d,i)=>{
+    d.classList.toggle('active', i===current);
+  });
+}
+
+function goTo(idx){
+  if(idx===current||idx<0||idx>=slides.length) return;
+  slides[current].classList.remove('active');
+  slides[current].classList.add('exit');
+  const prev = current;
+  current = idx;
+  setTimeout(()=>{ slides[prev].classList.remove('exit'); }, 600);
+  slides[current].classList.add('active');
+  updateProgress();
+  updateCounter();
+  updateDots();
+}
+
+function changeSlide(dir){ goTo(current+dir); }
+
+// Keyboard nav
+document.addEventListener('keydown', e=>{
+  if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' ') changeSlide(1);
+  if(e.key==='ArrowLeft'||e.key==='ArrowUp') changeSlide(-1);
+});
+
+// Touch swipe
+let touchX=0;
+document.addEventListener('touchstart',e=>{ touchX=e.changedTouches[0].screenX; },{passive:true});
+document.addEventListener('touchend',e=>{
+  const dx = e.changedTouches[0].screenX - touchX;
+  if(Math.abs(dx)>50) changeSlide(dx<0?1:-1);
+},{passive:true});
+
+// Init
+buildDots();
+slides[0].classList.add('active');
+updateProgress();
+updateCounter();
+</script>
+</body>
+</html>
